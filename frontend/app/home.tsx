@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,14 @@ import {
   ScrollView,
   Dimensions,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Stack, useRouter, type Href } from 'expo-router';
 import MapView, { Marker, PROVIDER_DEFAULT, Region } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useItems, useApiHealth } from '../hooks/useApi';
+import SubmitAccessibilityTagModal from '../components/SubmitAccessibilityTagModal';
 
 type TagStatus = 'Accessible' | 'Inaccessible' | 'Pending' | 'Unconfirmed';
 
@@ -41,9 +44,14 @@ export default function HomeScreen() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [statusFilter, setStatusFilter] = useState<TagStatus | 'All'>('All');
   const [typeFilter, setTypeFilter] = useState<'All' | Pin['type']>('All');
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
 
   const router = useRouter();
   const toLogin = '/' satisfies Href;
+  
+  // MongoDB integration
+  const { items, loading, error, refetch } = useItems();
+  const { isHealthy, checking } = useApiHealth();
 
   const handleLogout = () => {
     Alert.alert('Log out', 'Are you sure you want to log out?', [
@@ -76,11 +84,11 @@ export default function HomeScreen() {
             </Pressable>
           ),
           headerRight: () => (
-            <Pressable onPress={() => {}} style={styles.headerIconBtn}>
+            <Pressable onPress={() => setShowSubmitModal(true)} style={styles.headerIconBtn}>
               <Ionicons name="add" size={22} color="#0A84FF" />
             </Pressable>
           ),
-        }}
+        }} 
       />
 
       <SafeAreaView style={styles.root} edges={['bottom']}>
@@ -101,8 +109,9 @@ export default function HomeScreen() {
 
                 <Text style={[styles.sidebarTitle, { marginTop: 16 }]}>Quick Stats</Text>
                 <Text style={styles.statRow}>Current City: Halifax</Text>
-                <Text style={styles.statRow}>Tags Submitted: 0</Text>
-                <Text style={styles.statRow}>Confirmed: 0</Text>
+                <Text style={styles.statRow}>Items in Database: {loading ? '...' : items.length}</Text>
+                <Text style={styles.statRow}>Backend Status: {checking ? '...' : (isHealthy ? '✅ Connected' : '❌ Offline')}</Text>
+                {error && <Text style={styles.errorText}>Error: {error}</Text>}
 
                 {/* Divider */}
                 <View style={styles.divider} />
@@ -136,6 +145,11 @@ export default function HomeScreen() {
           </View>
         </View>
       </SafeAreaView>
+
+      <SubmitAccessibilityTagModal
+        visible={showSubmitModal}
+        onClose={() => setShowSubmitModal(false)}
+      />
     </>
   );
 }
@@ -196,6 +210,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   logoutText: { color: '#EF4444', fontWeight: '600' },
+  errorText: { color: '#EF4444', fontSize: 12, marginTop: 4 },
 
   mapWrap: { flex: 1 },
 });
