@@ -36,7 +36,7 @@ export interface AccessibilityTag {
   _id: string;
   locationName: string;
   featureType: 'Entrance' | 'Ramp' | 'Elevator' | 'Washroom' | 'Parking' | 'Pathway' | 'Stairs' | 'Sidewalk' | 'Crosswalk' | 'Building Access' | 'Seating Area' | 'Information Desk' | 'ATM/Kiosk' | 'Emergency Exit' | 'Lighting' | 'Signage';
-  accessibilityStatus: 'Fully Accessible' | 'Partially Accessible' | 'Not Accessible' | 'Temporarily Inaccessible' | 'Under Construction' | 'Needs Repair' | 'Unknown Status';
+  accessibilityStatus: 'Accessible' | 'Inaccessible' | 'Pending' | 'Unconfirmed';
   priorityLevel: 'Low Priority' | 'Medium Priority' | 'High Priority' | 'Critical' | 'Emergency';
   description: string;
   latitude: number;
@@ -49,7 +49,7 @@ export interface AccessibilityTag {
 export interface CreateAccessibilityTagData {
   locationName: string;
   featureType: 'Entrance' | 'Ramp' | 'Elevator' | 'Washroom' | 'Parking' | 'Pathway' | 'Stairs' | 'Sidewalk' | 'Crosswalk' | 'Building Access' | 'Seating Area' | 'Information Desk' | 'ATM/Kiosk' | 'Emergency Exit' | 'Lighting' | 'Signage';
-  accessibilityStatus: 'Fully Accessible' | 'Partially Accessible' | 'Not Accessible' | 'Temporarily Inaccessible' | 'Under Construction' | 'Needs Repair' | 'Unknown Status';
+  accessibilityStatus: 'Accessible' | 'Inaccessible' | 'Pending' | 'Unconfirmed';
   priorityLevel: 'Low Priority' | 'Medium Priority' | 'High Priority' | 'Critical' | 'Emergency';
   description: string;
   latitude: number;
@@ -57,7 +57,16 @@ export interface CreateAccessibilityTagData {
   photoUrl?: string;
 }
 
-const API_BASE_URL = 'http://localhost:3001/api';
+// Use different URLs based on platform
+const getApiBaseUrl = () => {
+  // For iOS simulator, use localhost
+  // For physical device, use your computer's IP
+  // Uncomment the line below if testing on physical device:
+  // return 'http://172.17.112.153:3001/api';
+  return 'http://localhost:3001/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 interface RequestOptions {
   method?: string;
@@ -81,15 +90,28 @@ class ApiService {
     }
 
     try {
-      const response = await fetch(url, config);
+      console.log('Making API request to:', url);
+      
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 10000)
+      );
+      
+      // Race between fetch and timeout
+      const response = await Promise.race([
+        fetch(url, config),
+        timeoutPromise
+      ]) as Response;
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
-      return await response.json();
+      const data = await response.json();
+      console.log('API request successful:', endpoint);
+      return data;
     } catch (error) {
-      console.error('API request failed:', error);
+      console.error('API request failed:', url, error);
       throw error;
     }
   }
@@ -127,11 +149,55 @@ class ApiService {
     return this.request<AccessibilityTag[]>('/accessibility-tags');
   }
 
+  async getLatestAccessibilityTagsPerLocation(): Promise<AccessibilityTag[]> {
+    return this.request<AccessibilityTag[]>('/accessibility-tags/latest-per-location');
+  }
+
   async createAccessibilityTag(tagData: CreateAccessibilityTagData): Promise<AccessibilityTag> {
     return this.request<AccessibilityTag>('/accessibility-tags', {
       method: 'POST',
       body: tagData,
     });
+  }
+
+  async getAccessibilityTagsByLocation(latitude: number, longitude: number, radius?: number): Promise<{
+    location: { latitude: number; longitude: number };
+    radius: number;
+    count: number;
+    tags: AccessibilityTag[];
+  }> {
+    const params = new URLSearchParams({
+      latitude: latitude.toString(),
+      longitude: longitude.toString(),
+    });
+    if (radius) {
+      params.append('radius', radius.toString());
+    }
+    return this.request(`/accessibility-tags/by-location?${params}`);
+  }
+
+  async approveAccessibilityTag(tagId: string): Promise<AccessibilityTag> {
+    return this.request<AccessibilityTag>(`/accessibility-tags/${tagId}/approve`, {
+      method: 'PUT',
+    });
+  }
+
+  async rejectAccessibilityTag(tagId: string): Promise<{ message: string; deletedTag: AccessibilityTag }> {
+    return this.request(`/accessibility-tags/${tagId}/reject`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getAdminStats(): Promise<{
+    totalTags: number;
+    accessibleTags: number;
+    pendingTags: number;
+    unconfirmedTags: number;
+    inaccessibleTags: number;
+    resolvedIssues: number;
+    pendingReview: number;
+  }> {
+    return this.request('/admin/stats');
   }
 
   // Health check

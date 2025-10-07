@@ -9,35 +9,218 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAccessibilityTags } from '../hooks/useApi';
+import { useLatestAccessibilityTagsPerLocation } from '../hooks/useApi';
+// import * as Location from 'expo-location'; // Will be installed separately
 
 interface SubmitAccessibilityTagModalProps {
   visible: boolean;
   onClose: () => void;
+  initialLocation?: {
+    latitude: number;
+    longitude: number;
+    address?: string;
+    status?: 'Accessible' | 'Inaccessible' | 'Pending' | 'Unconfirmed';
+  } | null;
 }
 
 type FeatureType = 'Entrance' | 'Ramp' | 'Elevator' | 'Washroom' | 'Parking' | 'Pathway' | 'Stairs' | 'Sidewalk' | 'Crosswalk' | 'Building Access' | 'Seating Area' | 'Information Desk' | 'ATM/Kiosk' | 'Emergency Exit' | 'Lighting' | 'Signage';
-type AccessibilityStatus = 'Fully Accessible' | 'Partially Accessible' | 'Not Accessible' | 'Temporarily Inaccessible' | 'Under Construction' | 'Needs Repair' | 'Unknown Status';
+type AccessibilityStatus = 'Accessible' | 'Inaccessible' | 'Pending' | 'Unconfirmed';
 type PriorityLevel = 'Low Priority' | 'Medium Priority' | 'High Priority' | 'Critical' | 'Emergency';
 
-export default function SubmitAccessibilityTagModal({ visible, onClose }: SubmitAccessibilityTagModalProps) {
+export default function SubmitAccessibilityTagModal({ visible, onClose, initialLocation }: SubmitAccessibilityTagModalProps) {
   const [locationName, setLocationName] = useState('');
   const [featureType, setFeatureType] = useState<FeatureType>('Entrance');
-  const [accessibilityStatus, setAccessibilityStatus] = useState<AccessibilityStatus>('Fully Accessible');
+  const [accessibilityStatus, setAccessibilityStatus] = useState<AccessibilityStatus>('Accessible');
   const [priorityLevel, setPriorityLevel] = useState<PriorityLevel>('Medium Priority');
   const [description, setDescription] = useState('');
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [loading, setLoading] = useState(false);
+  const [locationSearch, setLocationSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<any>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   
   // Dropdown states
   const [showFeatureDropdown, setShowFeatureDropdown] = useState(false);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showPriorityDropdown, setShowPriorityDropdown] = useState(false);
 
-  const { createAccessibilityTag } = useAccessibilityTags();
+  // Debounce timer for search
+  const searchTimeoutRef = React.useRef<any>(null);
+
+  const { createAccessibilityTag } = useLatestAccessibilityTagsPerLocation();
+
+  // Convert TagStatus to AccessibilityStatus
+  const convertTagStatusToAccessibilityStatus = (status: string): AccessibilityStatus => {
+    switch (status) {
+      case 'Accessible':
+        return 'Accessible';
+      case 'Inaccessible':
+        return 'Inaccessible';
+      case 'Pending':
+        return 'Pending';
+      case 'Unconfirmed':
+      default:
+        return 'Unconfirmed';
+    }
+  };
+
+  // Pre-populate form when initialLocation is provided
+  React.useEffect(() => {
+    if (initialLocation) {
+      setLatitude(initialLocation.latitude.toString());
+      setLongitude(initialLocation.longitude.toString());
+      
+      // Set accessibility status if provided
+      if (initialLocation.status) {
+        setAccessibilityStatus(convertTagStatusToAccessibilityStatus(initialLocation.status));
+      }
+      
+      if (initialLocation.address) {
+        setLocationSearch(initialLocation.address);
+        // Extract a simple location name from the full address
+        const addressParts = initialLocation.address.split(',');
+        setLocationName(addressParts[0] || 'New Location');
+      }
+      setSelectedLocation({
+        name: 'Dropped Location',
+        formatted_address: initialLocation.address || `${initialLocation.latitude}, ${initialLocation.longitude}`,
+        geometry: {
+          location: {
+            lat: initialLocation.latitude,
+            lng: initialLocation.longitude
+          }
+        }
+      });
+    }
+  }, [initialLocation]);
+
+  // Debounced search function
+  const debouncedSearch = (query: string) => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    searchTimeoutRef.current = setTimeout(() => {
+      searchLocations(query);
+    }, 300); // 300ms delay
+  };
+
+  const searchLocations = async (query: string) => {
+    if (query.length < 2) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+
+    try {
+      // Using OpenStreetMap Nominatim API for address suggestions
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=8&q=${encodeURIComponent(query + ', Halifax, Nova Scotia, Canada')}`
+      );
+      const data = await response.json();
+      
+      if (data && data.length > 0) {
+        const formattedResults = data.map((item: any) => ({
+          place_id: item.place_id,
+          name: item.name || item.display_name.split(',')[0],
+          formatted_address: item.display_name,
+          geometry: { 
+            location: { 
+              lat: parseFloat(item.lat), 
+              lng: parseFloat(item.lon) 
+            } 
+          },
+          type: item.type || 'address'
+        }));
+        
+        setSearchResults(formattedResults);
+        setShowSearchResults(true);
+      } else {
+        // Fallback to Halifax-specific locations if no results
+        const halifaxResults = [
+          {
+            place_id: 'halifax_1',
+            name: 'Halifax Central Library',
+            formatted_address: '5440 Spring Garden Rd, Halifax, NS B3J 1E9, Canada',
+            geometry: { location: { lat: 44.6448, lng: -63.5752 } },
+            type: 'library'
+          },
+          {
+            place_id: 'halifax_2', 
+            name: 'Halifax City Hall',
+            formatted_address: '1841 Argyle St, Halifax, NS B3J 2R7, Canada',
+            geometry: { location: { lat: 44.6476, lng: -63.5728 } },
+            type: 'government'
+          },
+          {
+            place_id: 'halifax_3',
+            name: 'Halifax Waterfront',
+            formatted_address: 'Lower Water St, Halifax, NS, Canada',
+            geometry: { location: { lat: 44.6488, lng: -63.5752 } },
+            type: 'waterfront'
+          },
+          {
+            place_id: 'halifax_4',
+            name: 'Dalhousie University',
+            formatted_address: '6299 South St, Halifax, NS B3H 4R2, Canada',
+            geometry: { location: { lat: 44.6369, lng: -63.5912 } },
+            type: 'university'
+          }
+        ].filter(location => 
+          location.name.toLowerCase().includes(query.toLowerCase()) ||
+          location.formatted_address.toLowerCase().includes(query.toLowerCase())
+        );
+        
+        setSearchResults(halifaxResults);
+        setShowSearchResults(halifaxResults.length > 0);
+      }
+    } catch (error) {
+      console.error('Location search error:', error);
+      setSearchResults([]);
+      setShowSearchResults(false);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const selectLocation = (location: any) => {
+    setSelectedLocation(location);
+    setLocationName(location.name);
+    setLocationSearch(location.formatted_address);
+    setLatitude(location.geometry.location.lat.toString());
+    setLongitude(location.geometry.location.lng.toString());
+    setShowSearchResults(false);
+  };
+
+  const getCurrentLocation = async () => {
+    Alert.alert('Location Feature', 'Current location detection requires expo-location package. For now, please search for your location manually.');
+    // TODO: Implement after installing expo-location
+    // try {
+    //   setLoading(true);
+    //   const { status } = await Location.requestForegroundPermissionsAsync();
+    //   if (status !== 'granted') {
+    //     Alert.alert('Permission Denied', 'Location permission is required.');
+    //     return;
+    //   }
+    //   const location = await Location.getCurrentPositionAsync({});
+    //   setLatitude(location.coords.latitude.toString());
+    //   setLongitude(location.coords.longitude.toString());
+    //   Alert.alert('Success', 'Current location detected!');
+    // } catch (error) {
+    //   Alert.alert('Error', 'Failed to get current location.');
+    // } finally {
+    //   setLoading(false);
+    // }
+  };
 
   const featureOptions: FeatureType[] = [
     'Entrance', 'Ramp', 'Elevator', 'Washroom', 'Parking', 'Pathway',
@@ -46,8 +229,7 @@ export default function SubmitAccessibilityTagModal({ visible, onClose }: Submit
   ];
 
   const statusOptions: AccessibilityStatus[] = [
-    'Fully Accessible', 'Partially Accessible', 'Not Accessible',
-    'Temporarily Inaccessible', 'Under Construction', 'Needs Repair', 'Unknown Status'
+    'Accessible', 'Inaccessible', 'Pending', 'Unconfirmed'
   ];
 
   const priorityOptions: PriorityLevel[] = [
@@ -96,17 +278,20 @@ export default function SubmitAccessibilityTagModal({ visible, onClose }: Submit
       // Reset form
       setLocationName('');
       setFeatureType('Entrance');
-      setAccessibilityStatus('Fully Accessible');
+      setAccessibilityStatus('Accessible');
       setPriorityLevel('Medium Priority');
       setDescription('');
       setLatitude('');
       setLongitude('');
+      setLocationSearch('');
+      setSearchResults([]);
+      setShowSearchResults(false);
+      setSelectedLocation(null);
       setShowFeatureDropdown(false);
       setShowStatusDropdown(false);
       setShowPriorityDropdown(false);
-      
-      Alert.alert('Success', 'Accessibility tag submitted successfully!');
       onClose();
+      Alert.alert('Success', 'Accessibility tag submitted successfully!');
     } catch (error) {
       Alert.alert('Error', 'Failed to submit tag. Please try again.');
     } finally {
@@ -118,11 +303,15 @@ export default function SubmitAccessibilityTagModal({ visible, onClose }: Submit
     // Reset form when canceling
     setLocationName('');
     setFeatureType('Entrance');
-    setAccessibilityStatus('Fully Accessible');
+    setAccessibilityStatus('Accessible');
     setPriorityLevel('Medium Priority');
     setDescription('');
     setLatitude('');
     setLongitude('');
+    setLocationSearch('');
+    setSearchResults([]);
+    setShowSearchResults(false);
+    setSelectedLocation(null);
     setShowFeatureDropdown(false);
     setShowStatusDropdown(false);
     setShowPriorityDropdown(false);
@@ -312,28 +501,103 @@ export default function SubmitAccessibilityTagModal({ visible, onClose }: Submit
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Latitude</Text>
-              <TextInput
-                style={styles.input}
-                value={latitude}
-                onChangeText={setLatitude}
-                placeholder="49.2862564491517"
-                placeholderTextColor="#9CA3AF"
-                keyboardType="numeric"
-              />
+              <Text style={styles.label}>Location Search <Text style={styles.required}>*</Text></Text>
+              <View style={styles.locationSearchContainer}>
+                <TextInput
+                  style={[styles.input, styles.locationSearchInput]}
+                  value={locationSearch}
+                  onChangeText={(text) => {
+                    setLocationSearch(text);
+                    if (text.length >= 2) {
+                      setSearchLoading(true);
+                    }
+                    debouncedSearch(text);
+                  }}
+                  placeholder="Type address (e.g., 500 Terry Avenue, Halifax Central Library)"
+                  placeholderTextColor="#9CA3AF"
+                />
+                {searchLoading ? (
+                  <ActivityIndicator 
+                    size="small" 
+                    color="#3B82F6" 
+                    style={styles.searchLoadingIndicator}
+                  />
+                ) : (
+                  <Pressable 
+                    onPress={getCurrentLocation}
+                    style={styles.currentLocationButton}
+                    disabled={loading}
+                  >
+                    <Ionicons 
+                      name="location" 
+                      size={20} 
+                      color={loading ? "#9CA3AF" : "#3B82F6"} 
+                    />
+                  </Pressable>
+                )}
+              </View>
+              
+              {showSearchResults && searchResults.length > 0 && (
+                <View style={styles.searchResultsContainer}>
+                  <ScrollView 
+                    style={styles.searchResultsList}
+                    nestedScrollEnabled={true}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    {searchResults.map((item) => (
+                      <Pressable
+                        key={item.place_id}
+                        style={styles.searchResultItem}
+                        onPress={() => selectLocation(item)}
+                      >
+                        <Ionicons name="location-outline" size={16} color="#6B7280" />
+                        <View style={styles.searchResultText}>
+                          <Text style={styles.searchResultName}>{item.name}</Text>
+                          <Text style={styles.searchResultAddress}>{item.formatted_address}</Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Longitude</Text>
-              <TextInput
-                style={styles.input}
-                value={longitude}
-                onChangeText={setLongitude}
-                placeholder="-123.127319176309"
-                placeholderTextColor="#9CA3AF"
-                keyboardType="numeric"
-              />
+            <View style={styles.coordinatesRow}>
+              <View style={[styles.inputGroup, styles.halfWidth]}>
+                <Text style={styles.label}>Latitude</Text>
+                <TextInput
+                  style={[styles.input, styles.coordinateInput]}
+                  value={latitude}
+                  onChangeText={setLatitude}
+                  placeholder="44.6448"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                  editable={!selectedLocation}
+                />
+              </View>
+
+              <View style={[styles.inputGroup, styles.halfWidth]}>
+                <Text style={styles.label}>Longitude</Text>
+                <TextInput
+                  style={[styles.input, styles.coordinateInput]}
+                  value={longitude}
+                  onChangeText={setLongitude}
+                  placeholder="-63.5752"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="numeric"
+                  editable={!selectedLocation}
+                />
+              </View>
             </View>
+            
+            {selectedLocation && (
+              <View style={styles.selectedLocationInfo}>
+                <Ionicons name="checkmark-circle" size={16} color="#22C55E" />
+                <Text style={styles.selectedLocationText}>
+                  Location selected: {selectedLocation.name}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Photo (Optional)</Text>
@@ -563,5 +827,90 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  // Location search styles
+  locationSearchContainer: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  locationSearchInput: {
+    flex: 1,
+    paddingRight: 50,
+  },
+  currentLocationButton: {
+    position: 'absolute',
+    right: 12,
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: '#F3F4F6',
+  },
+  searchResultsContainer: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    maxHeight: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  searchResultsList: {
+    maxHeight: 200,
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap: 8,
+  },
+  searchResultText: {
+    flex: 1,
+  },
+  searchResultName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  searchResultAddress: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  coordinatesRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  halfWidth: {
+    flex: 1,
+  },
+  coordinateInput: {
+    backgroundColor: '#F9FAFB',
+    color: '#6B7280',
+  },
+  selectedLocationInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  selectedLocationText: {
+    fontSize: 14,
+    color: '#166534',
+    fontWeight: '500',
+  },
+  searchLoadingIndicator: {
+    position: 'absolute',
+    right: 50,
+    top: 12,
+    padding: 8,
   },
 });

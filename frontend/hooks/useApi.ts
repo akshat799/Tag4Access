@@ -147,6 +147,49 @@ export const useAccessibilityTags = () => {
   };
 };
 
+export const useLatestAccessibilityTagsPerLocation = () => {
+  const [accessibilityTags, setAccessibilityTags] = useState<AccessibilityTag[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchLatestAccessibilityTags = async () => {
+    try {
+      setLoading(true);
+      const data = await ApiService.getLatestAccessibilityTagsPerLocation();
+      setAccessibilityTags(data);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createAccessibilityTag = async (tagData: CreateAccessibilityTagData) => {
+    try {
+      const newTag = await ApiService.createAccessibilityTag(tagData);
+      // Refresh the latest tags after creating a new one
+      await fetchLatestAccessibilityTags();
+      return newTag;
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    }
+  };
+
+  useEffect(() => {
+    fetchLatestAccessibilityTags();
+  }, []);
+
+  return {
+    accessibilityTags,
+    loading,
+    error,
+    refetch: fetchLatestAccessibilityTags,
+    createAccessibilityTag,
+  };
+};
+
 export const useApiHealth = () => {
   const [isHealthy, setIsHealthy] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -167,9 +210,46 @@ export const useApiHealth = () => {
     checkHealth();
   }, []);
 
-  return {
-    isHealthy,
-    checking,
-    checkHealth,
+  return { isHealthy, checking, checkHealth };
+};
+
+export const useAdminStats = () => {
+  const [stats, setStats] = useState<{
+    totalTags: number;
+    accessibleTags: number;
+    pendingTags: number;
+    unconfirmedTags: number;
+    inaccessibleTags: number;
+    resolvedIssues: number;
+    pendingReview: number;
+  }>({
+    totalTags: 0,
+    accessibleTags: 0,
+    pendingTags: 0,
+    unconfirmedTags: 0,
+    inaccessibleTags: 0,
+    resolvedIssues: 0,
+    pendingReview: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStats = async () => {
+    try {
+      setLoading(true);
+      const data = await ApiService.getAdminStats();
+      setStats(data);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  return { stats, loading, error, refetch: fetchStats };
 };
